@@ -70,6 +70,146 @@ ts_o3 <- ts(aqi_data$O3, frequency = 12, start = c(2014, 1))
 ts_temp <- ts(aqi_data$平均气温, frequency = 12, start = c(2014, 1))
 ts_humidity <- ts(aqi_data$平均湿度, frequency = 12, start = c(2014, 1))
 
+# 描述性统计分析
+cat("\nPerforming descriptive statistics analysis...\n")
+
+# 检查必要的包
+moments_available <- requireNamespace("moments", quietly = TRUE)
+reshape2_available <- requireNamespace("reshape2", quietly = TRUE)
+ggally_available <- requireNamespace("GGally", quietly = TRUE)
+
+# 加载可用的包
+if(moments_available) library(moments)
+if(reshape2_available) library(reshape2)
+if(ggally_available) library(GGally)
+
+# 计算描述性统计量
+desc_stats <- data.frame(
+  Variable = names(aqi_data)[2:10],
+  Mean = sapply(aqi_data[, 2:10], mean, na.rm = TRUE),
+  Median = sapply(aqi_data[, 2:10], median, na.rm = TRUE),
+  SD = sapply(aqi_data[, 2:10], sd, na.rm = TRUE),
+  Min = sapply(aqi_data[, 2:10], min, na.rm = TRUE),
+  Max = sapply(aqi_data[, 2:10], max, na.rm = TRUE),
+  Q1 = sapply(aqi_data[, 2:10], function(x) quantile(x, 0.25, na.rm = TRUE)),
+  Q3 = sapply(aqi_data[, 2:10], function(x) quantile(x, 0.75, na.rm = TRUE)),
+  Skewness = if(moments_available) {
+    sapply(aqi_data[, 2:10], function(x) moments::skewness(x, na.rm = TRUE))
+  } else {
+    rep(NA, 9)
+  },
+  Kurtosis = if(moments_available) {
+    sapply(aqi_data[, 2:10], function(x) moments::kurtosis(x, na.rm = TRUE))
+  } else {
+    rep(NA, 9)
+  }
+)
+
+# 打印描述性统计量
+cat("Descriptive statistics:\n")
+print(desc_stats)
+
+# 保存描述性统计量到CSV
+write.csv(desc_stats, "plots/descriptive_statistics.csv", row.names = FALSE)
+
+# 创建箱线图
+if(reshape2_available) {
+  cat("Creating boxplots for variables...\n")
+  boxplot_data <- reshape2::melt(aqi_data[, 2:10], variable.name = "Variable", value.name = "Value")
+  
+  p_boxplot <- ggplot(boxplot_data, aes(x = Variable, y = Value)) +
+    geom_boxplot(fill = "#69b3a2", color = "#3a6351", alpha = 0.7) +
+    theme_minimal() +
+    labs(
+      title = "Distribution of Air Quality Variables",
+      x = "",
+      y = "Value"
+    ) +
+    theme(
+      text = element_text(family = "serif"),
+      plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+      axis.title = element_text(size = 12),
+      axis.text = element_text(size = 10),
+      axis.text.x = element_text(angle = 45, hjust = 1)
+    ) +
+    scale_x_discrete(labels = function(x) gsub("平均", "", x))
+  
+  ggsave("plots/variables_boxplot.png", p_boxplot, width = 10, height = 6, dpi = 300)
+} else {
+  cat("reshape2 package not available, skipping boxplot creation\n")
+}
+
+# 创建时间序列分解图
+cat("Creating time series decomposition plot for AQI...\n")
+ts_decomp <- decompose(ts_aqi)
+
+decomp_df <- data.frame(
+  date = seq.Date(from = as.Date("2014-01-01"), by = "month", length.out = length(ts_aqi)),
+  observed = as.numeric(ts_decomp$x),
+  trend = as.numeric(ts_decomp$trend),
+  seasonal = as.numeric(ts_decomp$seasonal),
+  random = as.numeric(ts_decomp$random)
+)
+
+# 使用na.omit去除NA值
+decomp_df <- na.omit(decomp_df)
+
+# 创建观测值图
+p1 <- ggplot(decomp_df, aes(x = date, y = observed)) +
+  geom_line(color = "#3366CC") +
+  labs(title = "Observed", x = "", y = "") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 12))
+
+# 创建趋势图
+p2 <- ggplot(decomp_df, aes(x = date, y = trend)) +
+  geom_line(color = "#DC3912") +
+  labs(title = "Trend", x = "", y = "") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 12))
+
+# 创建季节性图
+p3 <- ggplot(decomp_df, aes(x = date, y = seasonal)) +
+  geom_line(color = "#FF9900") +
+  labs(title = "Seasonal", x = "", y = "") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 12))
+
+# 创建随机图
+p4 <- ggplot(decomp_df, aes(x = date, y = random)) +
+  geom_line(color = "#109618") +
+  labs(title = "Random", x = "", y = "") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 12))
+
+# 组合图形
+decomp_plot <- grid.arrange(p1, p2, p3, p4, ncol = 1)
+ggsave("plots/time_series_decomposition.png", decomp_plot, width = 10, height = 8, dpi = 300)
+
+# 创建AQI与主要污染物的散点图矩阵
+if(ggally_available) {
+  cat("Creating scatter plot matrix...\n")
+  pairs_data <- aqi_data[, c("AQI", "PM2.5", "PM10", "O3", "NO2", "平均气温", "平均湿度")]
+  names(pairs_data) <- c("AQI", "PM2.5", "PM10", "O3", "NO2", "Temperature", "Humidity")
+  
+  # 使用GGally包创建散点图矩阵
+  p_pairs <- GGally::ggpairs(pairs_data, 
+                           columns = 1:7,
+                           upper = list(continuous = GGally::wrap("cor", size = 3)),
+                           lower = list(continuous = GGally::wrap("points", alpha = 0.3, size = 0.5)),
+                           diag = list(continuous = GGally::wrap("densityDiag"))) +
+    theme_minimal() +
+    theme(
+      text = element_text(family = "serif", size = 8),
+      axis.text = element_text(size = 6),
+      strip.text = element_text(size = 8)
+    )
+  
+  ggsave("plots/scatter_matrix.png", p_pairs, width = 12, height = 10, dpi = 300)
+} else {
+  cat("GGally package not available, skipping scatter plot matrix creation\n")
+}
+
 # 3. 划分训练集和验证集
 # 训练集：前N-12期数据
 # 验证集：最后12期数据
